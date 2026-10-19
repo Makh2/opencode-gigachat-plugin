@@ -5,9 +5,10 @@ import { configureProvider } from "../plugin/provider.js";
 import { validateMessagePayload } from "../plugin/validation.js";
 import { INTEGRATION_ID, LEGACY_PROVIDER_ID, V2_PROVIDER_ID } from "./constants.js";
 import { DEFAULT_IMAGE_MODEL, generateImage } from "./image.js";
+import type { ImageGenerationResult } from "./image.js";
 import { GIGACHAT_MODELS } from "./models.js";
 import { createProviderInfo, mergeModelInfos } from "./provider.js";
-import { authManager, ensureEndpoint, lastDirectory, releaseEndpoint, rememberContext, retainEndpoint, refreshCredentialsFromConnection } from "./runtime.js";
+import { authManager, accountLimiter, ensureEndpoint, lastDirectory, releaseEndpoint, rememberContext, retainEndpoint, refreshCredentialsFromConnection } from "./runtime.js";
 
 const IMAGE_TOOL_NAME = "gigachat_generate_image";
 
@@ -133,20 +134,28 @@ export const GigachatV2Plugin = Plugin.define({
               return { content: "Image generation needs a non-empty `prompt`.", metadata: { error: true } };
             }
             await refreshCredentialsFromConnection();
-            const { token } = await authManager.getAccessToken();
-            const result = await generateImage(
-              {
-                prompt,
-                model: typeof input.model === "string" ? input.model : undefined,
-                path: typeof input.path === "string" ? input.path : undefined,
-                directory: lastDirectory(),
-              },
-              {
-                token,
-                verifySsl: authManager.getVerifySsl(),
-                caBundle: authManager.getCaBundle(),
-              },
-            );
+            const { token, account } = await authManager.getAccessToken();
+            // The image request also counts against the account's single
+            // in-flight slot, so it queues behind a chat completion.
+            await accountLimiter.acquire(account.id);
+            let result: ImageGenerationResult;
+            try {
+              result = await generateImage(
+                {
+                  prompt,
+                  model: typeof input.model === "string" ? input.model : undefined,
+                  path: typeof input.path === "string" ? input.path : undefined,
+                  directory: lastDirectory(),
+                },
+                {
+                  token,
+                  verifySsl: authManager.getVerifySsl(),
+                  caBundle: authManager.getCaBundle(),
+                },
+              );
+            } finally {
+              accountLimiter.release(account.id);
+            }
             return {
               output: { path: result.path, fileId: result.fileId },
               content: [

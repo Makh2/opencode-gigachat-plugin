@@ -4,6 +4,7 @@ import { logger } from "../gigacode/logger.js";
 import { DEFAULT_ENDPOINT_PORT, INTEGRATION_ID } from "./constants.js";
 import { startGigachatEndpoint } from "./endpoint.js";
 import type { GigachatEndpoint } from "./endpoint.js";
+import { KeyedLimiter, maxConcurrentPerAccount } from "./limiter.js";
 
 /**
  * V2 runtime state.
@@ -12,6 +13,12 @@ import type { GigachatEndpoint } from "./endpoint.js";
  * and the last known context live in the module and are shared.
  */
 export const authManager = new GigaCodeAuthManager();
+
+/**
+ * One queue per account, shared by the local endpoint and the image tool:
+ * GigaChat rejects a second simultaneous call with 429.
+ */
+export const accountLimiter = new KeyedLimiter(maxConcurrentPerAccount());
 
 let endpointPromise: Promise<GigachatEndpoint> | null = null;
 let lastContext: Plugin.Context | null = null;
@@ -70,6 +77,7 @@ export function ensureEndpoint(): Promise<GigachatEndpoint> {
       auth: authManager,
       port: preferredPort(),
       ensureCredentials: refreshCredentialsFromConnection,
+      limiter: accountLimiter,
     }).catch((error: unknown) => {
       endpointPromise = null;
       logger.error(

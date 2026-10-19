@@ -298,6 +298,101 @@ describe("local GigaChat endpoint", () => {
     expect(firstEventAt).toBeLessThan(marks.secondWriteAt ?? 0);
   });
 
+  it("queues concurrent chat calls for the same account", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const upstreamServer = createServer((request, response) => {
+      void readJson(request).then(() => {
+        inFlight += 1;
+        maxInFlight = Math.max(maxInFlight, inFlight);
+        setTimeout(() => {
+          inFlight -= 1;
+          response.writeHead(200, { "content-type": "application/json" });
+          response.end(
+            JSON.stringify({
+              id: "giga-queued",
+              created: 4,
+              model: "GigaChat-2",
+              choices: [
+                { index: 0, message: { role: "assistant", content: "ок" }, finish_reason: "stop" },
+              ],
+            }),
+          );
+        }, 60);
+      });
+    });
+    const upstream = `http://127.0.0.1:${await listen(upstreamServer)}`;
+    const endpoint = await startGigachatEndpoint({
+      auth: TEST_AUTH,
+      upstreamBaseUrl: upstream,
+    });
+    endpoints.push(endpoint);
+
+    const call = () =>
+      fetch(`${endpoint.baseURL}/chat/completions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          model: "GigaChat-2",
+          stream: false,
+          messages: [{ role: "user", content: "привет" }],
+        }),
+      });
+
+    const [first, second] = await Promise.all([call(), call()]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    // GigaChat answers the second simultaneous call with 429, so the endpoint
+    // must never keep two upstream calls open for one account.
+    expect(maxInFlight).toBe(1);
+  });
+
+  it("retries a 429 once when only one account is configured", async () => {
+    let attempts = 0;
+    const upstreamServer = createServer((request, response) => {
+      void readJson(request).then(() => {
+        attempts += 1;
+        if (attempts === 1) {
+          response.writeHead(429, { "content-type": "application/json" });
+          response.end(JSON.stringify({ message: "rate limit exceeded" }));
+          return;
+        }
+        response.writeHead(200, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({
+            id: "giga-retry",
+            created: 5,
+            model: "GigaChat-2",
+            choices: [
+              { index: 0, message: { role: "assistant", content: "ок" }, finish_reason: "stop" },
+            ],
+          }),
+        );
+      });
+    });
+    const upstream = `http://127.0.0.1:${await listen(upstreamServer)}`;
+    const endpoint = await startGigachatEndpoint({
+      auth: TEST_AUTH,
+      upstreamBaseUrl: upstream,
+      rateLimitRetryDelayMs: 0,
+    });
+    endpoints.push(endpoint);
+
+    const response = await fetch(`${endpoint.baseURL}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model: "GigaChat-2",
+        stream: false,
+        messages: [{ role: "user", content: "привет" }],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(attempts).toBe(2);
+  });
+
   it("retries with the next account when the active one is rate limited", async () => {
     const authorizations: string[] = [];
     const upstreamServer = createServer((request, response) => {

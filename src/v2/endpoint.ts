@@ -9,6 +9,7 @@ import { createErrorResponse } from "../plugin/errors.js";
 import { sendChatRequest, sendProxyRequest } from "../plugin/transport.js";
 import type { ConnectionSettings } from "../plugin/transport.js";
 import { CHAT_COMPLETIONS_SUFFIX, ENDPOINT_HOST, MAX_REQUEST_BYTES } from "./constants.js";
+import { KeyedLimiter, maxConcurrentPerAccount } from "./limiter.js";
 
 /**
  * The local endpoint plays the role the V1 fetch interceptor had: OpenCode
@@ -23,6 +24,12 @@ export type EndpointAuth = Pick<
 /** Statuses that mean "this key is done", so the next account may still work. */
 const ROTATABLE_STATUSES = new Set([401, 403, 429]);
 
+/**
+ * GigaChat answers a second simultaneous call with 429 even when the account is
+ * healthy. This delay is used only when there is no other account to rotate to.
+ */
+const RATE_LIMIT_RETRY_DELAY_MS = 1_000;
+
 function errorStatus(error: unknown): number | undefined {
   return sanitizeError(error).status;
 }
@@ -35,6 +42,12 @@ export interface GigachatEndpointOptions {
   readonly port?: number;
   /** Refreshes stored credentials before a request uses the token. */
   readonly ensureCredentials?: () => Promise<void>;
+  /** Shared per-account queue; the image tool uses the same instance. */
+  readonly limiter?: KeyedLimiter;
+  /** Overrides the per-account limit from `GIGACHAT_MAX_CONCURRENCY`. */
+  readonly maxConcurrentPerAccount?: number;
+  /** Delay before retrying a 429 when no other account is configured. */
+  readonly rateLimitRetryDelayMs?: number;
 }
 
 export interface GigachatEndpoint {
@@ -107,10 +120,29 @@ function closeServer(server: Server): Promise<void> {
   });
 }
 
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(signal.reason);
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(signal?.reason ?? new Error("Aborted"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 async function handleRequest(
   request: IncomingMessage,
   response: ServerResponse,
   options: GigachatEndpointOptions,
+  limiter: KeyedLimiter,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const method = request.method ?? "GET";
@@ -121,6 +153,14 @@ async function handleRequest(
   });
 
   let rotated = false;
+  let heldAccount: string | undefined;
+
+  const releaseSlot = () => {
+    if (heldAccount === undefined) return;
+    limiter.release(heldAccount);
+    heldAccount = undefined;
+  };
+
   try {
     const body = await readRequestBody(request);
     if (options.ensureCredentials) await options.ensureCredentials();
@@ -129,27 +169,39 @@ async function handleRequest(
       "",
     );
     const isChat = url.pathname.endsWith(CHAT_COMPLETIONS_SUFFIX);
+    const isInference = isChat || url.pathname.endsWith("/embeddings");
     logger.log(`[GigaCode-V2] ${method} ${url.pathname} -> ${isChat ? "chat" : "proxy"}`);
 
     // Fetches a token for whatever account is active right now, so a retry after
     // rotation uses the next key instead of the one that just failed.
     const attempt = async (): Promise<Response> => {
-      const { token } = await options.auth.getAccessToken();
-      const settings: ConnectionSettings = {
-        token,
-        verifySsl: options.auth.getVerifySsl(),
-        caBundle: options.auth.getCaBundle(),
-        headers: requestHeaders(request.headers),
-        signal: signal.signal,
-      };
-      return isChat
-        ? await sendChatRequest(`${upstream}${CHAT_COMPLETIONS_SUFFIX}`, body.toString("utf8"), settings)
-        : await sendProxyRequest(
-            `${upstream}${upstreamPath(url.pathname)}${url.search}`,
-            method,
-            body.byteLength > 0 ? new Uint8Array(body) : undefined,
-            settings,
-          );
+      const { token, account } = await options.auth.getAccessToken();
+      if (isInference) {
+        // GigaChat answers a second simultaneous inference call with 429, so
+        // the endpoint queues per account instead of forwarding the overlap.
+        await limiter.acquire(account.id, signal.signal);
+        heldAccount = account.id;
+      }
+      try {
+        const settings: ConnectionSettings = {
+          token,
+          verifySsl: options.auth.getVerifySsl(),
+          caBundle: options.auth.getCaBundle(),
+          headers: requestHeaders(request.headers),
+          signal: signal.signal,
+        };
+        return isChat
+          ? await sendChatRequest(`${upstream}${CHAT_COMPLETIONS_SUFFIX}`, body.toString("utf8"), settings)
+          : await sendProxyRequest(
+              `${upstream}${upstreamPath(url.pathname)}${url.search}`,
+              method,
+              body.byteLength > 0 ? new Uint8Array(body) : undefined,
+              settings,
+            );
+      } catch (error) {
+        releaseSlot();
+        throw error;
+      }
     };
 
     let result: Response;
@@ -157,11 +209,26 @@ async function handleRequest(
       result = await attempt();
     } catch (error) {
       const status = errorStatus(error);
-      const canRotate = status !== undefined && ROTATABLE_STATUSES.has(status);
-      if (!canRotate || !options.auth.rotateAccount(`HTTP ${status}`)) throw error;
-      rotated = true;
-      logger.warn(`[GigaCode-V2] Retrying ${url.pathname} with the next account`);
-      result = await attempt();
+      if (status === undefined || !ROTATABLE_STATUSES.has(status)) throw error;
+
+      if (status === 429) {
+        // Rate limits are transient even with one account: retry after a pause
+        // when there is nowhere to rotate. With several accounts, move first.
+        if (options.auth.rotateAccount(`HTTP ${status}`)) {
+          rotated = true;
+          logger.warn(`[GigaCode-V2] Retrying ${url.pathname} with the next account`);
+        } else {
+          const delay = options.rateLimitRetryDelayMs ?? RATE_LIMIT_RETRY_DELAY_MS;
+          logger.warn(`[GigaCode-V2] Rate limited; retrying ${url.pathname} in ${delay} ms`);
+          if (delay > 0) await sleep(delay, signal.signal);
+        }
+        result = await attempt();
+      } else {
+        if (!options.auth.rotateAccount(`HTTP ${status}`)) throw error;
+        rotated = true;
+        logger.warn(`[GigaCode-V2] Retrying ${url.pathname} with the next account`);
+        result = await attempt();
+      }
     }
     await pipeWebResponse(response, result);
   } catch (error) {
@@ -174,6 +241,8 @@ async function handleRequest(
       if (!rotated) options.auth.blockActiveAccount(reason);
     });
     await pipeWebResponse(response, errorResponse);
+  } finally {
+    releaseSlot();
   }
 }
 
@@ -196,8 +265,11 @@ function listen(server: Server, port: number): Promise<void> {
 export async function startGigachatEndpoint(
   options: GigachatEndpointOptions,
 ): Promise<GigachatEndpoint> {
+  const limiter =
+    options.limiter ??
+    new KeyedLimiter(options.maxConcurrentPerAccount ?? maxConcurrentPerAccount());
   const server = createServer((request, response) => {
-    void handleRequest(request, response, options).catch((error: unknown) => {
+    void handleRequest(request, response, options, limiter).catch((error: unknown) => {
       logger.error(
         "[GigaCode-V2] endpoint failure:",
         error instanceof Error ? error.message : String(error),
