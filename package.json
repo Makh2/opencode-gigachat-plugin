@@ -9,7 +9,9 @@
   "scripts": {
     "build": "tsc",
     "build:release": "npm run build && node scripts/build-release.mjs",
+    "build:release:v2": "npm run build && node scripts/build-release-v2.mjs",
     "test:release": "node scripts/test-release.mjs",
+    "test:release:v2": "node scripts/test-release-v2.mjs",
     "watch": "tsc -w",
     "test": "vitest run",
     "encode-creds": "node bin/encode-credentials.js"
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@opencode-ai/plugin": "^1.0.0",
+    "@opencode/plugin": "^2.0.32",
     "@types/node": "^20.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^5.2.2",
