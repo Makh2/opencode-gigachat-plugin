@@ -13,6 +13,14 @@ It converts requests and responses between OpenAI and GigaChat API v1 formats.
 The plugin supports text, tool calls, response streams, and image uploads.
 It obtains an OAuth token and verifies TLS certificates for requests to Sber.
 
+## OpenCode 2.x
+
+OpenCode 2 does not route provider traffic through `globalThis.fetch`, so the V1 interceptor does not work there.
+For 2.x use the V2 build — `dist/gigachat-plugin-v2.js`: the plugin starts a local endpoint and registers a `gigachat` provider that points at it.
+See [docs/V2.md](docs/V2.md) for installation, models, credentials, and limitations.
+
+The instructions below apply to OpenCode 1.x.
+
 ## Installation and Build
 
 You need OpenCode and the ready-to-use `gigachat-plugin.js` file.
@@ -189,8 +197,11 @@ Builds and updates replace changes to generated files.
 - The plugin converts `reasoning_effort` and `thinking` to system instructions. See [Reasoning parameters](docs/MODEL-VARIANTS.md).
 - The plugin shows a warning for each text part larger than 400 KB. It does not reduce the size of that part.
 
-Model IDs: `GigaChat`, `GigaChat-2`, `GigaChat-2-Lite`, `GigaChat-Plus`, `GigaChat-Pro`, `GigaChat-2-Pro`, `GigaChat-Max`, `GigaChat-2-Max`.
-The plugin maps `GigaChat-2-Lite` to `GigaChat-2`.
+Model IDs: `GigaChat-2`, `GigaChat-2-Pro`, `GigaChat-2-Max`, `GigaChat-3-Lightning`, `GigaChat-3-Pro`, `GigaChat-3-Ultra`.
+Sber no longer serves the older IDs without a generation number.
+The name `GigaChat-2-Lite` is mapped to `GigaChat-2`, but it is not offered as a separate model.
+Tools work on all six models; images and audio are accepted by `GigaChat-2-Pro`, `GigaChat-2-Max`, `GigaChat-3-Pro`, and `GigaChat-3-Ultra`, while `GigaChat-3-Lightning` is text-only.
+The plugin also registers a `gigachat_generate_image` tool and rotates several keys when a quota error occurs.
 
 Set context limits, output limits, and image support with the [configuration example](docs/CONFIGURATION.md).
 For reasoning parameters, see [Model variants](docs/MODEL-VARIANTS.md).
@@ -231,6 +242,7 @@ Provider settings and the stored OpenCode key take precedence over environment v
 
 ## Documentation
 
+- [V2 (OpenCode 2.x)](docs/V2.md): local endpoint transport, `gigachat` provider, credentials, and limits.
 - [Configuration](docs/CONFIGURATION.md): provider options, models, and login methods.
 - [Reasoning parameters](docs/MODEL-VARIANTS.md): model variants and response fields.
 - [Troubleshooting](docs/TROUBLESHOOTING.md): causes and actions.
