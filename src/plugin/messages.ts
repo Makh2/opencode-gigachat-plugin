@@ -3,6 +3,29 @@ import { logger } from "../gigacode/logger.js";
 import type { AttachmentOptions } from "./attachments.js";
 import { uploadBase64File } from "./attachments.js";
 import { getToolAlias, parseArgumentsToObject } from "./tools.js";
+
+/** Maps the short audio format used by OpenAI clients to a MIME type. */
+function audioMimeType(format: string): string {
+  switch (format.toLowerCase()) {
+    case "mp3":
+      return "audio/mpeg";
+    case "ogg":
+    case "oga":
+      return "audio/ogg";
+    case "webm":
+      return "audio/webm";
+    case "flac":
+      return "audio/flac";
+    case "m4a":
+    case "mp4":
+      return "audio/mp4";
+    case "aac":
+      return "audio/aac";
+    default:
+      return `audio/${format.toLowerCase()}`;
+  }
+}
+
 export async function translateMessages(
   messages: any[],
   systemInstruction: string,
@@ -139,6 +162,29 @@ export async function translateMessages(
           } else {
             if (textContent) textContent += "\n";
             textContent += `[Image URL: ${urlStr}]`;
+          }
+        } else if (part.type === "input_audio" || part.type === "audio") {
+          const audio = part.input_audio ?? part.audio ?? {};
+          const data = typeof audio.data === "string" ? audio.data : "";
+          if (!data) continue;
+          const format = typeof audio.format === "string" && audio.format ? audio.format : "wav";
+          const dataUrl = data.startsWith("data:")
+            ? data
+            : `data:${audioMimeType(format)};base64,${data}`;
+          try {
+            logger.log("Intercepted base64 audio. Uploading to GigaChat files...");
+            const fileId = await uploadBase64File(
+              dataUrl,
+              token,
+              verifySsl,
+              caBundle,
+              options,
+            );
+            attachments.push(fileId);
+          } catch (err: unknown) {
+            const error = sanitizeError(err);
+            logger.error("Failed to upload message audio:", error.message);
+            throw error;
           }
         }
       }
