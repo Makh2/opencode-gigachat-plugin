@@ -12,7 +12,7 @@ export function translateStreamChunk(
     id: sberJson.id || fallback.id,
     object: "chat.completion.chunk",
     created: sberJson.created ?? fallback.created,
-    model: sberJson.model || "GigaChat-Max",
+    model: sberJson.model || "GigaChat-2-Max",
     choices: (sberJson.choices || []).map((c: any) => {
       const delta: any = {
         role: c.delta?.role,
