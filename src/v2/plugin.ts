@@ -35,7 +35,7 @@ export const GigachatV2Plugin = Plugin.define({
         // Credentials (`credentials`, `scope`, `verifySSL`, `caBundle`) keep coming
         // from the V1 provider options, so existing configuration keeps working.
         configureProviderOptions(legacy.provider.settings);
-        // Verified on OpenCode 2.0.32: for a provider declared in `opencode.json`
+        // Verified on OpenCode 2.1.4: for a provider declared in `opencode.json`
         // neither `editor.update` nor `editor.remove` survives, because the
         // configuration is re-materialized after plugin transforms run.
       }
@@ -56,7 +56,7 @@ export const GigachatV2Plugin = Plugin.define({
     });
 
     // Auth methods belong to an integration, and OpenCode creates integrations
-    // only for providers declared in configuration. Verified on 2.0.32: a custom
+    // only for providers declared in configuration. Verified on 2.1.4: a custom
     // `key` method with a form (scope select) is replaced by the platform's
     // generic key entry, while an `env` method does survive. Scope for a key
     // login therefore comes from GIGACHAT_SCOPE, not from a prompt.
