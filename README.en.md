@@ -16,8 +16,38 @@ It obtains an OAuth token and verifies TLS certificates for requests to Sber.
 ## OpenCode 2.x
 
 OpenCode 2 does not route provider traffic through `globalThis.fetch`, so the V1 interceptor does not work there.
-For 2.x use the V2 build — `dist/gigachat-plugin-v2.js`: the plugin starts a local endpoint and registers a `gigachat` provider that points at it.
-See [docs/V2.md](docs/V2.md) for installation, models, credentials, and limitations.
+For 2.x use the separate V2 build — `gigachat-plugin-v2.js`: the plugin starts a local endpoint on `127.0.0.1:45731` and registers a `gigachat` provider that points at it, exposing the GigaChat-2 and GigaChat-3 models.
+
+1. Copy `gigachat-plugin-v2.js` from the [releases](../../releases) into the plugins directory:
+
+   ```bash
+   cp gigachat-plugin-v2.js "$HOME/.config/opencode/plugins/gigachat-plugin-v2.js"
+   ```
+
+2. Declare the provider in `~/.config/opencode/opencode.json`. Without this entry there are no login methods:
+
+   ```json
+   {
+     "providers": {
+       "gigachat": {
+         "name": "GigaChat (Sberbank)",
+         "package": "@opencode/ai/providers/openai-compatible",
+         "settings": { "baseURL": "http://127.0.0.1:45731/v1" },
+         "models": {
+           "GigaChat-3-Pro": {
+             "name": "GigaChat 3 Pro (Multimodal)",
+             "limit": { "context": 128000, "output": 8192 },
+             "capabilities": { "tools": true, "input": ["text", "image", "audio"], "output": ["text"] }
+           }
+         }
+       }
+     }
+   }
+   ```
+
+3. Set the key with `/connect` → `GigaChat (Sberbank)` or `opencode auth login gigachat`.
+
+Full model list, environment variables, and limitations: [docs/V2.md](docs/V2.md).
 
 The instructions below apply to OpenCode 1.x.
 

@@ -16,8 +16,38 @@
 ## OpenCode 2.x
 
 В OpenCode 2 запросы провайдеров не проходят через `globalThis.fetch`, поэтому перехватчик V1 там не работает.
-Для 2.x используется сборка V2 — `dist/gigachat-plugin-v2.js`: плагин поднимает локальный эндпоинт и регистрирует провайдера `gigachat`.
-Установка, список моделей, ключи и ограничения описаны в [docs/V2.md](docs/V2.md).
+Для 2.x используется отдельная сборка — `gigachat-plugin-v2.js`: плагин поднимает локальный эндпоинт на `127.0.0.1:45731` и регистрирует провайдера `gigachat`, через которого работают модели GigaChat-2 и GigaChat-3.
+
+1. Скопируйте `gigachat-plugin-v2.js` из [релизов](../../releases) в папку плагинов:
+
+   ```bash
+   cp gigachat-plugin-v2.js "$HOME/.config/opencode/plugins/gigachat-plugin-v2.js"
+   ```
+
+2. Объявите провайдера в `~/.config/opencode/opencode.json`. Без этой записи не будет методов входа:
+
+   ```json
+   {
+     "providers": {
+       "gigachat": {
+         "name": "GigaChat (Sberbank)",
+         "package": "@opencode/ai/providers/openai-compatible",
+         "settings": { "baseURL": "http://127.0.0.1:45731/v1" },
+         "models": {
+           "GigaChat-3-Pro": {
+             "name": "GigaChat 3 Pro (Multimodal)",
+             "limit": { "context": 128000, "output": 8192 },
+             "capabilities": { "tools": true, "input": ["text", "image", "audio"], "output": ["text"] }
+           }
+         }
+       }
+     }
+   }
+   ```
+
+3. Задайте ключ через `/connect` → `GigaChat (Sberbank)` или `opencode auth login gigachat`.
+
+Полный список моделей, переменные окружения и ограничения — в [docs/V2.md](docs/V2.md).
 
 Инструкции ниже относятся к OpenCode 1.x.
 
