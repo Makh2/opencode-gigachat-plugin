@@ -24,6 +24,7 @@ It uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic V
 ### Fixed
 
 - Ложный `429` на первом сообщении новой сессии: OpenCode отправлял заголовок сессии параллельно с основным запросом, а GigaChat разрешает только один запрос на аккаунт. Запросы теперь ждут свободный слот.
+- `422 INVALID_PARAMS: every function result must have an assistant function call in history` при параллельных вызовах инструментов: OpenCode присылает несколько `tool_calls` в одном сообщении ассистента, а GigaChat допускает один `function_call` на сообщение, и лишние результаты оставались без вызова. Теперь такой ответ разворачивается в пары «assistant с вызовом → function с результатом»; проверено на GigaChat-3-Lightning, GigaChat-3-Pro, GigaChat-3-Ultra и GigaChat-2-Max.
 
 ### Security
 

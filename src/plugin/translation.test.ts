@@ -511,4 +511,64 @@ describe("GigaChat Request Translator", () => {
     );
     expect(gigaRequestJson.messages[2].content).toBe('{"result":"success"}');
   });
+
+  it("should split parallel tool calls into call/result pairs", async () => {
+    const openAiRequest = {
+      messages: [
+        { role: "user", content: "Read two files" },
+        {
+          role: "assistant",
+          content: "Reading both",
+          tool_calls: [
+            {
+              id: "call_a",
+              type: "function",
+              function: { name: "read_file", arguments: '{"path":"a.txt"}' },
+            },
+            {
+              id: "call_b",
+              type: "function",
+              function: { name: "read_file", arguments: '{"path":"b.txt"}' },
+            },
+          ],
+        },
+        { role: "tool", tool_call_id: "call_a", content: "A" },
+        { role: "tool", tool_call_id: "call_b", content: "B" },
+        { role: "user", content: "Thanks" },
+      ],
+    };
+
+    const gigaRequest = await translateOpenAiToGigaChat(
+      openAiRequest,
+      "mock-token",
+      true,
+      "mock-ca",
+    );
+
+    // Every function result must follow its own assistant function call.
+    expect(gigaRequest.messages).toHaveLength(6);
+    expect(gigaRequest.messages[0].role).toBe("user");
+    expect(gigaRequest.messages[1].role).toBe("assistant");
+    expect(gigaRequest.messages[1].content).toBe("Reading both");
+    expect(gigaRequest.messages[1].function_call.name).toBe(
+      getToolAlias("read_file"),
+    );
+    expect(gigaRequest.messages[1].function_call.arguments).toEqual({
+      path: "a.txt",
+    });
+    expect(gigaRequest.messages[2].role).toBe("function");
+    expect(gigaRequest.messages[2].name).toBe(getToolAlias("read_file"));
+    expect(gigaRequest.messages[2].content).toBe(JSON.stringify("A"));
+    expect(gigaRequest.messages[3].role).toBe("assistant");
+    expect(gigaRequest.messages[3].content).toBeNull();
+    expect(gigaRequest.messages[3].function_call.name).toBe(
+      getToolAlias("read_file"),
+    );
+    expect(gigaRequest.messages[3].function_call.arguments).toEqual({
+      path: "b.txt",
+    });
+    expect(gigaRequest.messages[4].role).toBe("function");
+    expect(gigaRequest.messages[4].content).toBe(JSON.stringify("B"));
+    expect(gigaRequest.messages[5].role).toBe("user");
+  });
 });

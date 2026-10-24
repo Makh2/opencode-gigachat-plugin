@@ -95,7 +95,7 @@ export async function translateMessages(
     }
   }
 
-  for (const msg of nonSystemMessages) {
+  const translateMessage = async (msg: any): Promise<any> => {
     const gigaMsg: any = { role: msg.role };
 
     // --- Content handling ---
@@ -242,7 +242,60 @@ export async function translateMessages(
       gigaMsg.name = getToolAlias(msg.name);
     }
 
-    gigaMessages.push(gigaMsg);
+    return gigaMsg;
+  };
+
+  for (let index = 0; index < nonSystemMessages.length; index += 1) {
+    const msg = nonSystemMessages[index];
+    const calls: any[] = Array.isArray(msg.tool_calls) ? msg.tool_calls : [];
+
+    // GigaChat keeps one function_call per assistant message and demands an
+    // assistant call for every function result, so parallel OpenAI tool calls
+    // are split into call/result pairs.
+    if (msg.role === "assistant" && calls.length > 1) {
+      const pending = new Map<string, any[]>();
+      let cursor = index + 1;
+      while (
+        cursor < nonSystemMessages.length &&
+        (nonSystemMessages[cursor].role === "tool" ||
+          nonSystemMessages[cursor].role === "function")
+      ) {
+        const result = nonSystemMessages[cursor];
+        const key = String(result.tool_call_id ?? result.name ?? "");
+        const bucket = pending.get(key) ?? [];
+        bucket.push(result);
+        pending.set(key, bucket);
+        cursor += 1;
+      }
+
+      for (const [callIndex, call] of calls.entries()) {
+        const id = String(call.id ?? "");
+        const single =
+          callIndex === 0
+            ? { ...msg, tool_calls: [call] }
+            : {
+                ...msg,
+                content: null,
+                tool_calls: [call],
+                functions_state_id: undefined,
+              };
+        gigaMessages.push(await translateMessage(single));
+        for (const result of pending.get(id) ?? []) {
+          gigaMessages.push(await translateMessage(result));
+        }
+        pending.delete(id);
+      }
+      // Results that match no call in this message keep their original order.
+      for (const leftover of pending.values()) {
+        for (const result of leftover) {
+          gigaMessages.push(await translateMessage(result));
+        }
+      }
+      index = cursor - 1;
+      continue;
+    }
+
+    gigaMessages.push(await translateMessage(msg));
   }
 
   return gigaMessages;
