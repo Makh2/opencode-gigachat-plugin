@@ -32,6 +32,8 @@ It uses [Keep a Changelog](https://keepachangelog.com/en/1.0.0/) and [Semantic V
 ### Changed
 
 - `vitest.config.ts` ограничивает прогон каталогом `src`, иначе после `npm run build` тесты запускались дважды — из `src` и из `dist`.
+- Зависимости обновлены в пределах semver: `@opencode-ai/plugin` 1.19.4, `@opencode/plugin` 2.1.4, `@types/node` 20.19.43.
+- Scope из сохранённого креденшела читается из `configuration` (OpenCode 2.0) или `metadata` (2.1): в 2.1 поле переименовано.
 - Слой V2 использует существующие модули преобразования, потоков, инструментов и загрузки файлов без изменений.
 - Каталог моделей V2: поколения «2» и «3» — `GigaChat-2`, `GigaChat-2-Pro`, `GigaChat-2-Max`, `GigaChat-3-Lightning`, `GigaChat-3-Pro`, `GigaChat-3-Ultra`; `GigaChat-2-Lite` остаётся псевдонимом `GigaChat-2`.
   Возможности проверены на живом API: инструменты работают у всех шести моделей, изображения принимают все, кроме `GigaChat-3-Lightning` (она текстовая).

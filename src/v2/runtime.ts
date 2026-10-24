@@ -59,8 +59,12 @@ export async function refreshCredentialsFromConnection(): Promise<void> {
     if (authManager.getAccounts().length > 1) return;
     const value = await context.integration.connection.resolve(connection);
     if (!value || value.type !== "key" || !value.key) return;
-    const configuration = (value.configuration ?? {}) as Record<string, unknown>;
-    const scope = configuration.scope;
+    // OpenCode 2.0 stores extra fields in `configuration`, 2.1 moved them to `metadata`.
+    const fields = value as {
+      configuration?: Record<string, unknown>;
+      metadata?: Record<string, unknown>;
+    };
+    const scope = (fields.configuration ?? fields.metadata)?.scope;
     authManager.setCredentials(value.key, typeof scope === "string" ? scope : undefined);
     logger.log(`[GigaCode-V2] Using stored credentials from the "${connection.label}" connection`);
   } catch (error) {
